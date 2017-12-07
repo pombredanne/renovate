@@ -8,18 +8,15 @@ Object {
 }
 `;
 
-exports[`logger/config-serializer replaces functions 1`] = `
+exports[`logger/config-serializer squashes templates 1`] = `
 Object {
-  "api": "[Function]",
-  "logger": "[Function]",
   "nottoken": "b",
+  "prBody": "[Template]",
 }
 `;
 
-exports[`logger/config-serializer squashes templates 1`] = `
+exports[`logger/config-serializer suppresses content 1`] = `
 Object {
-  "api": "[Function]",
-  "nottoken": "b",
-  "prBody": "[Template]",
+  "content": "[content]",
 }
 `;

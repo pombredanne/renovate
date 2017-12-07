@@ -6,8 +6,9 @@ describe('config/index', () => {
     let configParser;
     let defaultArgv;
     let ghGot;
-    let glGot;
-    let githubApp;
+    let get;
+    let vstsApi;
+    let vstsHelper;
     beforeEach(() => {
       jest.resetModules();
       configParser = require('../../lib/config/index.js');
@@ -15,10 +16,11 @@ describe('config/index', () => {
       jest.mock('gh-got');
       ghGot = require('gh-got');
       jest.mock('gl-got');
-      glGot = require('gl-got');
-      jest.mock('../../lib/config/github-app');
-      githubApp = require('../../lib/config/github-app');
-      githubApp.getRepositories = jest.fn();
+      get = require('gl-got');
+      jest.mock('../../lib/platform/vsts/vsts-got-wrapper');
+      vstsApi = require('../../lib/platform/vsts/vsts-got-wrapper');
+      jest.mock('../../lib/platform/vsts/vsts-helper');
+      vstsHelper = require('../../lib/platform/vsts/vsts-helper');
     });
     it('throws for invalid platform', async () => {
       const env = {};
@@ -51,6 +53,16 @@ describe('config/index', () => {
       }
       expect(err.message).toBe('You need to supply a GitLab token.');
     });
+    it('throws for no vsts token', async () => {
+      const env = { RENOVATE_PLATFORM: 'vsts' };
+      let err;
+      try {
+        await configParser.parseConfigs(env, defaultArgv);
+      } catch (e) {
+        err = e;
+      }
+      expect(err.message).toBe('You need to supply a VSTS token.');
+    });
     it('supports token in env', async () => {
       const env = { GITHUB_TOKEN: 'abc' };
       await configParser.parseConfigs(env, defaultArgv);
@@ -60,39 +72,11 @@ describe('config/index', () => {
       const env = {};
       await configParser.parseConfigs(env, defaultArgv);
     });
-    it('throws if no GitHub App key defined', async () => {
-      defaultArgv = defaultArgv.concat(['--github-app-id=5']);
-      const env = {};
-      let err;
-      try {
-        await configParser.parseConfigs(env, defaultArgv);
-      } catch (e) {
-        err = e;
-      }
-      expect(err.message).toBe('A GitHub App Private Key must be provided');
-    });
-    it('supports github app', async () => {
-      const env = {};
-      defaultArgv = defaultArgv.concat([
-        '--github-app-id=5',
-        '--github-app-key=abc',
-      ]);
-      githubApp.getRepositories.mockImplementationOnce(() => {
-        const result = [
-          {
-            repository: 'a/b',
-            token: 'token_a',
-          },
-        ];
-        return result;
-      });
-      await configParser.parseConfigs(env, defaultArgv);
-      expect(githubApp.getRepositories.mock.calls.length).toBe(1);
-    });
     it('autodiscovers github platform', async () => {
       const env = {};
       defaultArgv = defaultArgv.concat(['--autodiscover', '--token=abc']);
       ghGot.mockImplementationOnce(() => ({
+        headers: {},
         body: [
           {
             full_name: 'a/b',
@@ -104,7 +88,7 @@ describe('config/index', () => {
       }));
       await configParser.parseConfigs(env, defaultArgv);
       expect(ghGot.mock.calls.length).toBe(1);
-      expect(glGot.mock.calls.length).toBe(0);
+      expect(get.mock.calls.length).toBe(0);
     });
     it('autodiscovers gitlab platform', async () => {
       const env = {};
@@ -113,7 +97,8 @@ describe('config/index', () => {
         '--platform=gitlab',
         '--token=abc',
       ]);
-      glGot.mockImplementationOnce(() => ({
+      get.mockImplementationOnce(() => ({
+        headers: {},
         body: [
           {
             path_with_namespace: 'a/b',
@@ -122,27 +107,62 @@ describe('config/index', () => {
       }));
       await configParser.parseConfigs(env, defaultArgv);
       expect(ghGot.mock.calls.length).toBe(0);
-      expect(glGot.mock.calls.length).toBe(1);
+      expect(get.mock.calls.length).toBe(1);
+    });
+    it('autodiscovers vsts platform', async () => {
+      const env = {};
+      defaultArgv = defaultArgv.concat([
+        '--autodiscover',
+        '--platform=vsts',
+        '--token=abc',
+      ]);
+      vstsHelper.getFile.mockImplementationOnce(() => `Hello Renovate!`);
+      vstsApi.gitApi.mockImplementationOnce(() => ({
+        getRepositories: jest.fn(() => [
+          {
+            name: 'repo1',
+            project: {
+              name: 'prj1',
+            },
+          },
+          {
+            name: 'repo2',
+            project: {
+              name: 'prj1',
+            },
+          },
+        ]),
+      }));
+      vstsHelper.getProjectAndRepo.mockImplementationOnce(() => ({
+        project: 'prj1',
+        repo: 'repo1',
+      }));
+      await configParser.parseConfigs(env, defaultArgv);
+      expect(ghGot.mock.calls.length).toBe(0);
+      expect(get.mock.calls.length).toBe(0);
+      expect(vstsApi.gitApi.mock.calls.length).toBe(1);
     });
     it('logs if no autodiscovered repositories', async () => {
       const env = { GITHUB_TOKEN: 'abc' };
       defaultArgv = defaultArgv.concat(['--autodiscover']);
       ghGot.mockImplementationOnce(() => ({
+        headers: {},
         body: [],
       }));
       await configParser.parseConfigs(env, defaultArgv);
       expect(ghGot.mock.calls.length).toBe(1);
-      expect(glGot.mock.calls.length).toBe(0);
+      expect(get.mock.calls.length).toBe(0);
     });
     it('adds a log file', async () => {
       const env = { GITHUB_TOKEN: 'abc', RENOVATE_LOG_FILE: 'debug.log' };
       defaultArgv = defaultArgv.concat(['--autodiscover']);
       ghGot.mockImplementationOnce(() => ({
+        headers: {},
         body: [],
       }));
       await configParser.parseConfigs(env, defaultArgv);
       expect(ghGot.mock.calls.length).toBe(1);
-      expect(glGot.mock.calls.length).toBe(0);
+      expect(get.mock.calls.length).toBe(0);
     });
   });
   describe('mergeChildConfig(parentConfig, childConfig)', () => {
@@ -184,11 +204,36 @@ describe('config/index', () => {
       const configParser = require('../../lib/config/index.js');
       const config = configParser.mergeChildConfig(parentConfig, childConfig);
       expect(config.packageRules.map(rule => rule.a)).toMatchObject([
-        3,
-        4,
         1,
         2,
+        3,
+        4,
       ]);
+    });
+    it('handles null parent packageRules', () => {
+      const parentConfig = { ...defaultConfig };
+      Object.assign(parentConfig, {
+        packageRules: null,
+      });
+      const childConfig = {
+        packageRules: [{ a: 3 }, { a: 4 }],
+      };
+      const configParser = require('../../lib/config/index.js');
+      const config = configParser.mergeChildConfig(parentConfig, childConfig);
+      expect(config.packageRules).toHaveLength(2);
+    });
+    it('handles null child packageRules', () => {
+      const parentConfig = { ...defaultConfig };
+      parentConfig.packageRules = [{ a: 3 }, { a: 4 }];
+      const configParser = require('../../lib/config/index.js');
+      const config = configParser.mergeChildConfig(parentConfig, {});
+      expect(config.packageRules).toHaveLength(2);
+    });
+    it('handles undefined childConfig', () => {
+      const parentConfig = { ...defaultConfig };
+      const configParser = require('../../lib/config/index.js');
+      const config = configParser.mergeChildConfig(parentConfig, undefined);
+      expect(config).toMatchObject(parentConfig);
     });
   });
 });

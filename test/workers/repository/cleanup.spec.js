@@ -1,88 +1,66 @@
-const defaultConfig = require('../../../lib/config/defaults').getConfig();
 const cleanup = require('../../../lib/workers/repository/cleanup');
-const logger = require('../../_fixtures/logger');
+
+let config;
+beforeEach(() => {
+  jest.resetAllMocks();
+  config = require('../../_fixtures/config');
+  config.platform = 'github';
+  config.errors = [];
+  config.warnings = [];
+});
 
 describe('workers/repository/cleanup', () => {
-  describe('pruneStaleBranches(config, branchUpgradeNames)', () => {
-    let branchNames;
-    let config;
-    beforeEach(() => {
-      branchNames = [];
-      config = { ...defaultConfig };
-      config.api = {
-        getAllRenovateBranches: jest.fn(),
-        getAllPrs: jest.fn(),
-        getPr: jest.fn(),
-        deleteBranch: jest.fn(),
-      };
-      config.logger = logger;
+  describe('pruneStaleBranches()', () => {
+    it('returns if no branchList', async () => {
+      delete config.branchList;
+      await cleanup.pruneStaleBranches(config, config.branchList);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(0);
     });
     it('returns if config is not github', async () => {
+      config.branchList = [];
       config.platform = 'gitlab';
-      await cleanup.pruneStaleBranches(config, branchNames);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(0);
+      await cleanup.pruneStaleBranches(config, config.branchList);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(0);
     });
     it('returns if no remaining branches', async () => {
-      branchNames = ['renovate/a', 'renovate/b'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce(branchNames);
-      await cleanup.pruneStaleBranches(config, branchNames);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.getAllPrs.mock.calls).toHaveLength(0);
+      config.branchList = ['renovate/a', 'renovate/b'];
+      platform.getAllRenovateBranches.mockReturnValueOnce(config.branchList);
+      await cleanup.pruneStaleBranches(config, config.branchList);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(1);
+      expect(platform.deleteBranch.mock.calls).toHaveLength(0);
     });
-    it('deletes remaining branch', async () => {
-      branchNames = ['renovate/a', 'renovate/b'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce(
-        branchNames.concat(['renovate/c'])
+    it('renames deletes remaining branch', async () => {
+      config.branchList = ['renovate/a', 'renovate/b'];
+      platform.getAllRenovateBranches.mockReturnValueOnce(
+        config.branchList.concat(['renovate/c'])
       );
-      await cleanup.pruneStaleBranches(config, branchNames);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.deleteBranch.mock.calls).toHaveLength(1);
-    });
-    it('deletes lock file maintenance if pr is closed', async () => {
-      branchNames = ['renovate/lock-file-maintenance'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce([
-        'renovate/lock-file-maintenance',
-      ]);
-      config.api.getBranchPr = jest.fn(() => ({ isClosed: true }));
-      await cleanup.pruneStaleBranches(config, [
-        'renovate/lock-file-maintenance',
-      ]);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.deleteBranch.mock.calls).toHaveLength(1);
+      platform.findPr.mockReturnValueOnce({});
+      await cleanup.pruneStaleBranches(config, config.branchList);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(1);
+      expect(platform.deleteBranch.mock.calls).toHaveLength(1);
+      expect(platform.updatePr.mock.calls).toHaveLength(1);
     });
     it('deletes lock file maintenance if pr is unmergeable', async () => {
-      branchNames = ['renovate/lock-file-maintenance'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce([
+      config.branchList = ['renovate/lock-file-maintenance'];
+      platform.getAllRenovateBranches.mockReturnValueOnce([
         'renovate/lock-file-maintenance',
       ]);
-      config.api.getBranchPr = jest.fn(() => ({ isUnmergeable: true }));
+      platform.getBranchPr = jest.fn(() => ({ isUnmergeable: true }));
       await cleanup.pruneStaleBranches(config, [
         'renovate/lock-file-maintenance',
       ]);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.deleteBranch.mock.calls).toHaveLength(1);
-    });
-    it('deletes lock file maintenance if no changed files', async () => {
-      branchNames = ['renovate/lock-file-maintenance'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce([
-        'renovate/lock-file-maintenance',
-      ]);
-      config.api.getBranchPr = jest.fn(() => ({ changed_files: 0 }));
-      await cleanup.pruneStaleBranches(config, [
-        'renovate/lock-file-maintenance',
-      ]);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.deleteBranch.mock.calls).toHaveLength(1);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(1);
+      expect(platform.deleteBranch.mock.calls).toHaveLength(1);
     });
     it('calls delete only once', async () => {
-      branchNames = ['renovate/lock-file-maintenance'];
-      config.api.getAllRenovateBranches.mockReturnValueOnce([
+      config.branchList = ['renovate/lock-file-maintenance'];
+      platform.getAllRenovateBranches.mockReturnValueOnce([
         'renovate/lock-file-maintenance',
       ]);
-      config.api.getBranchPr = jest.fn(() => ({ isClosed: true }));
+      platform.getBranchPr = jest.fn(() => ({ isUnmergeable: true }));
       await cleanup.pruneStaleBranches(config, []);
-      expect(config.api.getAllRenovateBranches.mock.calls).toHaveLength(1);
-      expect(config.api.deleteBranch.mock.calls).toHaveLength(1);
+      expect(platform.getAllRenovateBranches.mock.calls).toHaveLength(1);
+      expect(platform.deleteBranch.mock.calls).toHaveLength(1);
     });
   });
 });

@@ -19,9 +19,9 @@ describe('config/validation', () => {
     it('errors for all types', () => {
       const config = {
         enabled: 1,
-        schedule: 5,
-        semanticPrefix: 7,
-        githubAppId: 'none',
+        schedule: ['every 15 mins every weekday'],
+        labels: 5,
+        semanticCommitType: 7,
         lockFileMaintenance: false,
         packageRules: [
           {
